@@ -1,0 +1,6 @@
+@CareNest_SePay_HostAddress = http://localhost:5291
+
+GET {{CareNest_SePay_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
