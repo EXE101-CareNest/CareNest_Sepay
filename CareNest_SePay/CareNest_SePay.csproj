@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CareNest_SePay.Application\CareNest_SePay.Application.csproj" />
     <ProjectReference Include="..\CareNest_SePay.Infrastructure\CareNest_SePay.Infrastructure.csproj" />
   </ItemGroup>
 
