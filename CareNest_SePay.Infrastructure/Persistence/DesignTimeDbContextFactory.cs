@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Json;
 
 namespace CareNest_SePay.Infrastructure.Persistence
 {
@@ -9,10 +10,17 @@ namespace CareNest_SePay.Infrastructure.Persistence
         public CareNestDbContext CreateDbContext(string[] args)
         {
             var optionsBuilder = new DbContextOptionsBuilder<CareNestDbContext>();
-            
-            // Use default connection string for design time
-            optionsBuilder.UseNpgsql("Host=localhost;Database=CareNest_SePay;Username=postgres;Password=password");
-            
+
+            // Load configuration from appsettings.json
+            var configuration = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: false)
+                .AddJsonFile("appsettings.Development.json", optional: true)
+                .Build();
+
+            var connectionString = configuration.GetConnectionString("PostgresConnection");
+            optionsBuilder.UseNpgsql(connectionString);
+
             return new CareNestDbContext(optionsBuilder.Options);
         }
     }

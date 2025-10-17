@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CareNest_SePay.Infrastructure.Migrations
 {
     [DbContext(typeof(CareNestDbContext))]
-    [Migration("20251012102821_UpdateToBaseEntity")]
-    partial class UpdateToBaseEntity
+    [Migration("20251017053302_new1")]
+    partial class new1
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -37,13 +37,16 @@ namespace CareNest_SePay.Infrastructure.Migrations
                         .HasColumnType("character varying(50)");
 
                     b.Property<decimal>("Accumulated")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<decimal>("AmountIn")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<decimal>("AmountOut")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("Body")
                         .IsRequired()

@@ -49,15 +49,16 @@ namespace CareNest_SePay.Infrastructure.Persistence.Repositories
             return transaction;
         }
 
-        public new async Task<SepayTransaction> UpdateAsync(SepayTransaction transaction)
+        public new Task<SepayTransaction> UpdateAsync(SepayTransaction transaction)
         {
             _dbSet.Update(transaction);
-            return transaction;
+            return Task.FromResult(transaction);
         }
 
-        public new async Task DeleteAsync(SepayTransaction transaction)
+        public new Task DeleteAsync(SepayTransaction transaction)
         {
             _dbSet.Remove(transaction);
+            return Task.CompletedTask;
         }
 
         public async Task<int> CountByStatusAsync(TransactionStatus status)

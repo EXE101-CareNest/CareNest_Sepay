@@ -34,13 +34,16 @@ namespace CareNest_SePay.Infrastructure.Migrations
                         .HasColumnType("character varying(50)");
 
                     b.Property<decimal>("Accumulated")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<decimal>("AmountIn")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<decimal>("AmountOut")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("Body")
                         .IsRequired()

@@ -1,28 +1,30 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using CareNest_SePay.Application.Interfaces.Services;
 using CareNest_SePay.Domain.Entities;
 using CareNest_SePay.Domain.Commons.Enums;
-using CareNest_SePay.Domain.Commons.Constants;
+using Newtonsoft.Json;
 using System.Text;
 
-namespace CareNest_SePay.Infrastructure.Services
+namespace CareNest_SePay.Application.Services
 {
     public class PaymentService : IPaymentService
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<PaymentService> _logger;
-        private readonly HttpClient _httpClient;
+        private readonly ISepayAPIService _sepayAPIService;
 
-        public PaymentService(IConfiguration configuration, ILogger<PaymentService> logger, HttpClient httpClient)
+        public PaymentService(
+            IConfiguration configuration, 
+            ILogger<PaymentService> logger,
+            ISepayAPIService sepayAPIService)
         {
             _configuration = configuration;
             _logger = logger;
-            _httpClient = httpClient;
+            _sepayAPIService = sepayAPIService;
         }
 
-        public async Task<SepayTransaction> ProcessPaymentAsync(object webhookData)
+        public Task<SepayTransaction> ProcessPaymentAsync(object webhookData)
         {
             try
             {
@@ -32,7 +34,7 @@ namespace CareNest_SePay.Infrastructure.Services
                 // Parse webhook data (this would be specific to Sepay's webhook format)
                 var transaction = ParseWebhookData(webhookData);
 
-                return transaction;
+                return Task.FromResult(transaction);
             }
             catch (Exception ex)
             {
@@ -41,21 +43,23 @@ namespace CareNest_SePay.Infrastructure.Services
             }
         }
 
-        public async Task<SepayTransaction> UpdateTransactionStatusAsync(int transactionId, string status)
+        public Task<SepayTransaction> UpdateTransactionStatusAsync(int transactionId, string status)
         {
             // This would typically involve calling Sepay's API to update transaction status
             // For now, we'll just log the action
             _logger.LogInformation($"Updating transaction {transactionId} status to {status}");
             
             // Return a mock transaction - in real implementation, this would call Sepay API
-            return new SepayTransaction
+            var transaction = new SepayTransaction
             {
                 TransactionId = transactionId,
                 Status = Enum.TryParse<TransactionStatus>(status, out var parsedStatus) ? parsedStatus : TransactionStatus.Pending
             };
+            
+            return Task.FromResult(transaction);
         }
 
-        public async Task<bool> ValidateWebhookSignatureAsync(string signature, string payload)
+        public Task<bool> ValidateWebhookSignatureAsync(string signature, string payload)
         {
             try
             {
@@ -66,21 +70,21 @@ namespace CareNest_SePay.Infrastructure.Services
                 if (string.IsNullOrEmpty(secretKey))
                 {
                     _logger.LogWarning("Sepay secret key not configured");
-                    return false;
+                    return Task.FromResult(false);
                 }
 
                 // Here you would implement the actual signature validation logic
                 // For now, we'll just return true if signature is provided
-                return !string.IsNullOrEmpty(signature);
+                return Task.FromResult(!string.IsNullOrEmpty(signature));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error validating webhook signature");
-                return false;
+                return Task.FromResult(false);
             }
         }
 
-        public async Task<SepayTransaction> CreateTestTransactionAsync(decimal amount, string description = "Test Transaction")
+        public Task<SepayTransaction> CreateTestTransactionAsync(decimal amount, string description = "Test Transaction")
         {
             try
             {
@@ -96,7 +100,7 @@ namespace CareNest_SePay.Infrastructure.Services
                     TransactionId = new Random().Next(100000, 999999),
                     Gateway = PaymentGateway.Sepay,
                     TransactionDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    AccountNumber = _configuration["Sepay:AccountNumber"],
+                    AccountNumber = _configuration["Sepay:AccountNumber"] ?? "TEST_ACCOUNT",
                     SubAccount = "TEST",
                     AmountIn = amount,
                     AmountOut = 0,
@@ -110,7 +114,7 @@ namespace CareNest_SePay.Infrastructure.Services
 
                 _logger.LogInformation($"Test transaction created: {JsonConvert.SerializeObject(testTransaction)}");
 
-                return testTransaction;
+                return Task.FromResult(testTransaction);
             }
             catch (Exception ex)
             {
@@ -157,23 +161,17 @@ namespace CareNest_SePay.Infrastructure.Services
                     status = transaction.Status.ToString()
                 };
 
-                var json = JsonConvert.SerializeObject(webhookData);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                // Add headers
-                content.Headers.Add("X-Sepay-Signature", GenerateTestSignature(json));
-                content.Headers.Add("Authorization", $"Bearer {_configuration["Sepay:ApiKey"]}");
-
-                var response = await _httpClient.PostAsync($"{baseUrl}{webhookUrl}", content);
+                var signature = GenerateTestSignature(JsonConvert.SerializeObject(webhookData));
+                var success = await _sepayAPIService.SendWebhookAsync($"{baseUrl}{webhookUrl}", webhookData, signature);
                 
-                if (response.IsSuccessStatusCode)
+                if (success)
                 {
                     _logger.LogInformation($"Test webhook sent successfully for transaction {transaction.TransactionId}");
                     return true;
                 }
                 else
                 {
-                    _logger.LogError($"Failed to send test webhook: {response.StatusCode}");
+                    _logger.LogError($"Failed to send test webhook for transaction {transaction.TransactionId}");
                     return false;
                 }
             }
@@ -204,24 +202,29 @@ namespace CareNest_SePay.Infrastructure.Services
                 var jsonData = JsonConvert.SerializeObject(webhookData);
                 var dynamicData = JsonConvert.DeserializeObject<dynamic>(jsonData);
 
-                // Parse the webhook data according to Sepay's format
-                // This is a simplified version - you would need to adjust based on actual Sepay webhook format
+                _logger.LogInformation($"Parsing SePay webhook data: {jsonData}");
+
+                // Parse the webhook data according to SePay's webhook format
+                // Based on SePay documentation: https://sepay.vn/lap-trinh-cong-thanh-toan.html
                 var transaction = new SepayTransaction
                 {
-                    TransactionId = dynamicData?.transactionId ?? 0,
+                    TransactionId = GetLongValue(dynamicData?.transactionId) ?? 0,
                     Gateway = PaymentGateway.Sepay,
-                    TransactionDate = dynamicData?.transactionDate ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    TransactionDate = GetLongValue(dynamicData?.transactionDate) ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     AccountNumber = dynamicData?.accountNumber?.ToString() ?? string.Empty,
                     SubAccount = dynamicData?.subAccount?.ToString() ?? string.Empty,
-                    AmountIn = decimal.TryParse(dynamicData?.amountIn?.ToString(), out decimal amountIn) ? amountIn : 0,
-                    AmountOut = decimal.TryParse(dynamicData?.amountOut?.ToString(), out decimal amountOut) ? amountOut : 0,
-                    Accumulated = decimal.TryParse(dynamicData?.accumulated?.ToString(), out decimal accumulated) ? accumulated : 0,
+                    AmountIn = GetDecimalValue(dynamicData?.amountIn),
+                    AmountOut = GetDecimalValue(dynamicData?.amountOut),
+                    Accumulated = GetDecimalValue(dynamicData?.accumulated),
                     Code = dynamicData?.code?.ToString() ?? string.Empty,
                     TransactionContent = dynamicData?.transactionContent?.ToString() ?? string.Empty,
                     ReferenceNumber = dynamicData?.referenceNumber?.ToString() ?? string.Empty,
                     Body = jsonData,
-                    Status = TransactionStatus.Pending
+                    Status = DetermineTransactionStatus(dynamicData),
+                    ProcessedAt = DateTime.UtcNow
                 };
+
+                _logger.LogInformation($"Parsed transaction: ID={transaction.TransactionId}, Amount={transaction.AmountIn}, Status={transaction.Status}");
 
                 return transaction;
             }
@@ -229,6 +232,64 @@ namespace CareNest_SePay.Infrastructure.Services
             {
                 _logger.LogError(ex, "Error parsing webhook data");
                 throw;
+            }
+        }
+
+        private long? GetLongValue(dynamic value)
+        {
+            if (value == null) return null;
+            
+            if (long.TryParse(value.ToString(), out long result))
+                return result;
+                
+            return null;
+        }
+
+        private decimal GetDecimalValue(dynamic value)
+        {
+            if (value == null) return 0;
+            
+            if (decimal.TryParse(value.ToString(), out decimal result))
+                return result;
+                
+            return 0;
+        }
+
+        private TransactionStatus DetermineTransactionStatus(dynamic webhookData)
+        {
+            try
+            {
+                // Dựa trên tài liệu SePay, xác định trạng thái giao dịch
+                var status = webhookData?.status?.ToString()?.ToLower();
+                var amountIn = GetDecimalValue(webhookData?.amountIn);
+                var amountOut = GetDecimalValue(webhookData?.amountOut);
+
+                // Nếu có tiền vào (amountIn > 0) và không có tiền ra (amountOut = 0)
+                if (amountIn > 0 && amountOut == 0)
+                {
+                    return TransactionStatus.Completed;
+                }
+                
+                // Nếu có tiền ra (amountOut > 0)
+                if (amountOut > 0)
+                {
+                    return TransactionStatus.Refunded;
+                }
+
+                // Dựa trên status field nếu có
+                return status switch
+                {
+                    "completed" or "success" => TransactionStatus.Completed,
+                    "failed" or "error" => TransactionStatus.Failed,
+                    "cancelled" or "cancel" => TransactionStatus.Cancelled,
+                    "processing" => TransactionStatus.Processing,
+                    _ => TransactionStatus.Pending
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error determining transaction status, defaulting to Pending");
+                return TransactionStatus.Pending;
             }
         }
     }

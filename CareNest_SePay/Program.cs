@@ -10,6 +10,7 @@ using CareNest_SePay.Application.Features.Queries;
 using CareNest_SePay.Infrastructure.Persistence.Repositories;
 using CareNest_SePay.Infrastructure.Persistence.UOW;
 using CareNest_SePay.Infrastructure.Services;
+using CareNest_SePay.Application.Services;
 using CareNest_SePay.Extensions;
 using CareNest_SePay.Domain.Entities;
 using CareNest_SePay.Application.Common;
@@ -43,11 +44,15 @@ builder.Services.AddScoped<IQueryHandler<GetTransactionsByDateRangeQuery, PageRe
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-// Services
-builder.Services.AddScoped<IPaymentService, PaymentService>();
+// Application Services (Business Logic)
+builder.Services.AddScoped<IPaymentService, CareNest_SePay.Application.Services.PaymentService>();
+builder.Services.AddScoped<CareNest_SePay.Application.Services.IQRCodeService, CareNest_SePay.Application.Services.QRCodeService>();
+
+// Infrastructure Services (External API calls)
+builder.Services.AddScoped<ISepayAPIService, SepayAPIService>();
 
 // HttpClient for external API calls
-builder.Services.AddHttpClient<IPaymentService, PaymentService>();
+builder.Services.AddHttpClient<ISepayAPIService, SepayAPIService>();
 
 // Global Exception Handling
 builder.Services.AddGlobalExceptionHandling();

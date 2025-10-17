@@ -9,6 +9,7 @@ using CareNest_SePay.Application.Features.Commands;
 using CareNest_SePay.Application.Features.Queries;
 using CareNest_SePay.Application.Common;
 using CareNest_SePay.Domain.Entities;
+using Newtonsoft.Json;
 
 namespace CareNest_SePay.Controllers
 {
@@ -32,8 +33,24 @@ namespace CareNest_SePay.Controllers
         {
             try
             {
+                _logger.LogInformation("Received SePay webhook");
+                
+                // Lấy headers từ SePay
                 var apiKey = Request.Headers["Authorization"].FirstOrDefault() ?? string.Empty;
                 var signature = Request.Headers["X-Sepay-Signature"].FirstOrDefault();
+                var timestamp = Request.Headers["X-Sepay-Timestamp"].FirstOrDefault();
+                var nonce = Request.Headers["X-Sepay-Nonce"].FirstOrDefault();
+
+                _logger.LogInformation($"Webhook headers - API Key: {!string.IsNullOrEmpty(apiKey)}, Signature: {!string.IsNullOrEmpty(signature)}");
+
+                // Validate webhook signature (theo tài liệu SePay)
+                var isValidSignature = await _paymentService.ValidateWebhookSignatureAsync(signature ?? string.Empty, JsonConvert.SerializeObject(webhookData));
+                if (!isValidSignature)
+                {
+                    _logger.LogWarning("Invalid webhook signature");
+                    var errorResponse = BaseResponse<object>.ErrorResult("Invalid webhook signature");
+                    return Unauthorized(errorResponse);
+                }
 
                 var command = new ProcessWebhookCommand
                 {
@@ -44,22 +61,24 @@ namespace CareNest_SePay.Controllers
 
                 var transaction = await _dispatcher.DispatchAsync<ProcessWebhookCommand, SepayTransaction>(command);
 
+                _logger.LogInformation($"Webhook processed successfully - Transaction ID: {transaction.TransactionId}, Status: {transaction.Status}");
+
                 var response = BaseResponse<SepayTransaction>.SuccessResult(
                     transaction, 
-                    MessageConstant.WebhookProcessed);
+                    "Webhook processed successfully");
 
                 return Ok(response);
             }
             catch (UnauthorizedAccessException ex)
             {
                 _logger.LogWarning(ex, "Unauthorized webhook request");
-                var response = BaseResponse<object>.ErrorResult(ex.Message);
+                var response = BaseResponse<object>.ErrorResult("Unauthorized webhook request");
                 return Unauthorized(response);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing webhook");
-                var response = BaseResponse<object>.ErrorResult(MessageConstant.ErrorInternal);
+                var response = BaseResponse<object>.ErrorResult("Internal server error");
                 return StatusCode(500, response);
             }
         }

@@ -10,4 +10,10 @@ namespace CareNest_SePay.Application.Interfaces.Services
         Task<SepayTransaction> CreateTestTransactionAsync(decimal amount, string description = "Test Transaction");
         Task<bool> SendTestWebhookAsync(SepayTransaction transaction);
     }
+
+    public interface ISepayAPIService
+    {
+        Task<string> GenerateQRCodeAsync(object vietQRData);
+        Task<bool> SendWebhookAsync(string webhookUrl, object webhookData, string signature);
+    }
 }
