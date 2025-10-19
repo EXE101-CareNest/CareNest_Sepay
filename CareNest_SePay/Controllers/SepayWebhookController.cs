@@ -9,7 +9,9 @@ using CareNest_SePay.Application.Features.Commands;
 using CareNest_SePay.Application.Features.Queries;
 using CareNest_SePay.Application.Common;
 using CareNest_SePay.Domain.Entities;
-using Newtonsoft.Json;
+using CareNest_SePay.Application.DTOs;
+using NewtonsoftJson = Newtonsoft.Json;
+using SystemTextJson = System.Text.Json;
 
 namespace CareNest_SePay.Controllers
 {
@@ -20,42 +22,89 @@ namespace CareNest_SePay.Controllers
         private readonly ILogger<SepayWebhookController> _logger;
         private readonly IUseCaseDispatcher _dispatcher;
         private readonly IPaymentService _paymentService;
+        private readonly Microsoft.Extensions.Configuration.IConfiguration _configuration;
 
-        public SepayWebhookController(ILogger<SepayWebhookController> logger, IUseCaseDispatcher dispatcher, IPaymentService paymentService)
+        public SepayWebhookController(ILogger<SepayWebhookController> logger, IUseCaseDispatcher dispatcher, IPaymentService paymentService, Microsoft.Extensions.Configuration.IConfiguration configuration)
         {
             _logger = logger;
             _dispatcher = dispatcher;
             _paymentService = paymentService;
+            _configuration = configuration;
         }
 
         [HttpPost("webhook")]
-        public async Task<IActionResult> ReceiveWebhook([FromBody] object webhookData)
+        public async Task<IActionResult> ReceiveWebhook([FromBody] SystemTextJson.JsonElement webhookData)
         {
             try
             {
                 _logger.LogInformation("Received SePay webhook");
                 
-                // Lấy headers từ SePay
-                var apiKey = Request.Headers["Authorization"].FirstOrDefault() ?? string.Empty;
-                var signature = Request.Headers["X-Sepay-Signature"].FirstOrDefault();
-                var timestamp = Request.Headers["X-Sepay-Timestamp"].FirstOrDefault();
-                var nonce = Request.Headers["X-Sepay-Nonce"].FirstOrDefault();
-
-                _logger.LogInformation($"Webhook headers - API Key: {!string.IsNullOrEmpty(apiKey)}, Signature: {!string.IsNullOrEmpty(signature)}");
-
-                // Validate webhook signature (theo tài liệu SePay)
-                var isValidSignature = await _paymentService.ValidateWebhookSignatureAsync(signature ?? string.Empty, JsonConvert.SerializeObject(webhookData));
-                if (!isValidSignature)
+                // Validate API Key
+                var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+                _logger.LogInformation($"Raw Authorization header: '{authHeader}'");
+                
+                if (string.IsNullOrEmpty(authHeader))
                 {
-                    _logger.LogWarning("Invalid webhook signature");
-                    var errorResponse = BaseResponse<object>.ErrorResult("Invalid webhook signature");
-                    return Unauthorized(errorResponse);
+                    _logger.LogWarning("Missing Authorization header");
+                    return Unauthorized(BaseResponse<object>.ErrorResult("Missing Authorization header"));
                 }
 
+                var receivedApiKey = authHeader
+                    .Replace("Apikey ", "", StringComparison.OrdinalIgnoreCase)
+                    .Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase)
+                    .Trim();
+
+                var expectedApiKey = _configuration["Sepay:ApiKey"];
+                _logger.LogInformation($"Expected API Key: '{expectedApiKey}'");
+                _logger.LogInformation($"Received API Key: '{receivedApiKey}'");
+                _logger.LogInformation($"API Key match: {receivedApiKey == expectedApiKey}");
+
+                if (receivedApiKey != expectedApiKey)
+                {
+                    _logger.LogWarning($"Invalid API Key - Expected: '{expectedApiKey}', Received: '{receivedApiKey}'");
+                    return Unauthorized(BaseResponse<object>.ErrorResult("Invalid API Key"));
+                }
+
+                _logger.LogInformation("API Key validated successfully");
+
+                // Log raw webhook data để debug
+                var rawJson = webhookData.GetRawText();
+                _logger.LogInformation($"Webhook raw data: {rawJson}");
+
+                // Parse webhook data ngay ở controller
+                var webhookPayload = SystemTextJson.JsonSerializer.Deserialize<SepayWebhookPayload>(
+                    rawJson, 
+                    new SystemTextJson.JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                );
+
+                if (webhookPayload == null)
+                {
+                    _logger.LogWarning("Failed to parse webhook payload");
+                    return BadRequest(BaseResponse<object>.ErrorResult("Invalid webhook data format"));
+                }
+
+                _logger.LogInformation(
+                    $"Parsed webhook - ID: {webhookPayload.Id}, Amount: {webhookPayload.TransferAmount}, Type: {webhookPayload.TransferType}"
+                );
+
+                // Optional signature validation: only validate if signature header is provided
+                var signature = Request.Headers["X-Sepay-Signature"].FirstOrDefault();
+                if (!string.IsNullOrEmpty(signature))
+                {
+                    var isValidSignature = await _paymentService.ValidateWebhookSignatureAsync(signature, rawJson);
+                    if (!isValidSignature)
+                    {
+                        _logger.LogWarning("Invalid webhook signature");
+                        var errorResponse = BaseResponse<object>.ErrorResult("Invalid webhook signature");
+                        return Unauthorized(errorResponse);
+                    }
+                }
+
+                // Truyền object đã parse vào command
                 var command = new ProcessWebhookCommand
                 {
-                    WebhookData = webhookData,
-                    ApiKey = apiKey,
+                    WebhookPayload = webhookPayload,  // Truyền object đã parse
+                    ApiKey = receivedApiKey,
                     Signature = signature
                 };
 
@@ -69,17 +118,20 @@ namespace CareNest_SePay.Controllers
 
                 return Ok(response);
             }
+            catch (SystemTextJson.JsonException ex)
+            {
+                _logger.LogError(ex, "Invalid JSON format in webhook");
+                return BadRequest(BaseResponse<object>.ErrorResult("Invalid JSON format"));
+            }
             catch (UnauthorizedAccessException ex)
             {
                 _logger.LogWarning(ex, "Unauthorized webhook request");
-                var response = BaseResponse<object>.ErrorResult("Unauthorized webhook request");
-                return Unauthorized(response);
+                return Unauthorized(BaseResponse<object>.ErrorResult("Unauthorized"));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing webhook");
-                var response = BaseResponse<object>.ErrorResult("Internal server error");
-                return StatusCode(500, response);
+                return StatusCode(500, BaseResponse<object>.ErrorResult($"Internal server error: {ex.Message}"));
             }
         }
 

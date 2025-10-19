@@ -34,13 +34,7 @@ namespace CareNest_SePay.Application.Features.Handlers
         {
             try
             {
-                // Validate API key
-                var expectedKey = $"{PaymentConstants.SEPAY_API_KEY_PREFIX} {_configuration["Sepay:ApiKey"]}";
-                if (command.ApiKey != expectedKey)
-                {
-                    _logger.LogWarning("Invalid API Key received");
-                    throw new UnauthorizedAccessException("Invalid API Key");
-                }
+                // API Key is validated at controller level; no need to re-validate here
 
                 // Validate webhook signature if provided
                 if (!string.IsNullOrEmpty(command.Signature))
@@ -56,8 +50,10 @@ namespace CareNest_SePay.Application.Features.Handlers
 
                 _logger.LogInformation($"Processing webhook: {JsonConvert.SerializeObject(command.WebhookData)}");
 
-                // Process the webhook data
-                var transaction = await _paymentService.ProcessPaymentAsync(command.WebhookData);
+                // Process the webhook data using parsed payload if available
+                var transaction = command.WebhookPayload != null 
+                    ? await _paymentService.ProcessPaymentAsync(command.WebhookPayload)
+                    : await _paymentService.ProcessPaymentAsync(command.WebhookData);
 
                 // Save to database
                 await _unitOfWork.SepayTransactionRepository.AddAsync(transaction);

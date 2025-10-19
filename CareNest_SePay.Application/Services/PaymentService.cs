@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using CareNest_SePay.Application.Interfaces.Services;
 using CareNest_SePay.Domain.Entities;
 using CareNest_SePay.Domain.Commons.Enums;
+using CareNest_SePay.Application.DTOs;
 using Newtonsoft.Json;
 using System.Text;
 
@@ -33,6 +34,42 @@ namespace CareNest_SePay.Application.Services
 
                 // Parse webhook data (this would be specific to Sepay's webhook format)
                 var transaction = ParseWebhookData(webhookData);
+
+                return Task.FromResult(transaction);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing payment webhook");
+                throw;
+            }
+        }
+
+        public Task<SepayTransaction> ProcessPaymentAsync(SepayWebhookPayload webhookPayload)
+        {
+            try
+            {
+                _logger.LogInformation($"Processing payment webhook - ID: {webhookPayload.Id}, Amount: {webhookPayload.TransferAmount}, Type: {webhookPayload.TransferType}");
+
+                // Create transaction from parsed payload
+                var transaction = new SepayTransaction
+                {
+                    TransactionId = webhookPayload.Id,
+                    Gateway = PaymentGateway.Sepay,
+                    TransactionDate = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    AccountNumber = webhookPayload.AccountNumber,
+                    SubAccount = webhookPayload.SubAccount ?? string.Empty,
+                    AmountIn = webhookPayload.TransferAmount,
+                    AmountOut = 0,
+                    Accumulated = webhookPayload.Accumulated,
+                    Code = webhookPayload.Code ?? string.Empty,
+                    TransactionContent = webhookPayload.Content,
+                    ReferenceNumber = webhookPayload.ReferenceCode,
+                    Body = JsonConvert.SerializeObject(webhookPayload),
+                    Status = DetermineTransactionStatus(webhookPayload),
+                    ProcessedAt = DateTime.UtcNow
+                };
+
+                _logger.LogInformation($"Parsed transaction: ID={transaction.TransactionId}, Amount={transaction.AmountIn}, Status={transaction.Status}");
 
                 return Task.FromResult(transaction);
             }
@@ -289,6 +326,30 @@ namespace CareNest_SePay.Application.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error determining transaction status, defaulting to Pending");
+                return TransactionStatus.Pending;
+            }
+        }
+
+        private TransactionStatus DetermineTransactionStatus(SepayWebhookPayload webhookPayload)
+        {
+            try
+            {
+                // Dựa trên transferType và transferAmount
+                if (webhookPayload.TransferType == "in" && webhookPayload.TransferAmount > 0)
+                {
+                    return TransactionStatus.Completed;
+                }
+                
+                if (webhookPayload.TransferType == "out" && webhookPayload.TransferAmount > 0)
+                {
+                    return TransactionStatus.Refunded;
+                }
+
+                return TransactionStatus.Pending;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error determining transaction status from payload, defaulting to Pending");
                 return TransactionStatus.Pending;
             }
         }
