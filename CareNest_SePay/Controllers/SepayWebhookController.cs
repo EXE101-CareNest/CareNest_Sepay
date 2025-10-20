@@ -10,6 +10,7 @@ using CareNest_SePay.Application.Features.Queries;
 using CareNest_SePay.Application.Common;
 using CareNest_SePay.Domain.Entities;
 using CareNest_SePay.Application.DTOs;
+using CareNest_SePay.Application.Services;
 using NewtonsoftJson = Newtonsoft.Json;
 using SystemTextJson = System.Text.Json;
 
@@ -23,26 +24,33 @@ namespace CareNest_SePay.Controllers
         private readonly IUseCaseDispatcher _dispatcher;
         private readonly IPaymentService _paymentService;
         private readonly Microsoft.Extensions.Configuration.IConfiguration _configuration;
+        private readonly IWebhookBackgroundService _backgroundService;
 
-        public SepayWebhookController(ILogger<SepayWebhookController> logger, IUseCaseDispatcher dispatcher, IPaymentService paymentService, Microsoft.Extensions.Configuration.IConfiguration configuration)
+        public SepayWebhookController(
+            ILogger<SepayWebhookController> logger, 
+            IUseCaseDispatcher dispatcher, 
+            IPaymentService paymentService, 
+            Microsoft.Extensions.Configuration.IConfiguration configuration,
+            IWebhookBackgroundService backgroundService)
         {
             _logger = logger;
             _dispatcher = dispatcher;
             _paymentService = paymentService;
             _configuration = configuration;
+            _backgroundService = backgroundService;
         }
 
         [HttpPost("webhook")]
         public async Task<IActionResult> ReceiveWebhook([FromBody] SystemTextJson.JsonElement webhookData)
         {
+            var startTime = DateTime.UtcNow;
+            
             try
             {
                 _logger.LogInformation("Received SePay webhook");
                 
-                // Validate API Key
+                // 1. FAST VALIDATION (50ms) - Chỉ validate cần thiết
                 var authHeader = Request.Headers["Authorization"].FirstOrDefault();
-                _logger.LogInformation($"Raw Authorization header: '{authHeader}'");
-                
                 if (string.IsNullOrEmpty(authHeader))
                 {
                     _logger.LogWarning("Missing Authorization header");
@@ -55,23 +63,14 @@ namespace CareNest_SePay.Controllers
                     .Trim();
 
                 var expectedApiKey = _configuration["Sepay:ApiKey"];
-                _logger.LogInformation($"Expected API Key: '{expectedApiKey}'");
-                _logger.LogInformation($"Received API Key: '{receivedApiKey}'");
-                _logger.LogInformation($"API Key match: {receivedApiKey == expectedApiKey}");
-
                 if (receivedApiKey != expectedApiKey)
                 {
                     _logger.LogWarning($"Invalid API Key - Expected: '{expectedApiKey}', Received: '{receivedApiKey}'");
                     return Unauthorized(BaseResponse<object>.ErrorResult("Invalid API Key"));
                 }
 
-                _logger.LogInformation("API Key validated successfully");
-
-                // Log raw webhook data để debug
+                // 2. FAST PARSE (20ms) - Parse webhook data
                 var rawJson = webhookData.GetRawText();
-                _logger.LogInformation($"Webhook raw data: {rawJson}");
-
-                // Parse webhook data ngay ở controller
                 var webhookPayload = SystemTextJson.JsonSerializer.Deserialize<SepayWebhookPayload>(
                     rawJson, 
                     new SystemTextJson.JsonSerializerOptions { PropertyNameCaseInsensitive = true }
@@ -83,11 +82,9 @@ namespace CareNest_SePay.Controllers
                     return BadRequest(BaseResponse<object>.ErrorResult("Invalid webhook data format"));
                 }
 
-                _logger.LogInformation(
-                    $"Parsed webhook - ID: {webhookPayload.Id}, Amount: {webhookPayload.TransferAmount}, Type: {webhookPayload.TransferType}"
-                );
+                _logger.LogInformation($"Webhook received - ID: {webhookPayload.Id}, Amount: {webhookPayload.TransferAmount}");
 
-                // Optional signature validation: only validate if signature header is provided
+                // 3. OPTIONAL SIGNATURE VALIDATION (30ms) - Chỉ nếu có signature
                 var signature = Request.Headers["X-Sepay-Signature"].FirstOrDefault();
                 if (!string.IsNullOrEmpty(signature))
                 {
@@ -95,42 +92,52 @@ namespace CareNest_SePay.Controllers
                     if (!isValidSignature)
                     {
                         _logger.LogWarning("Invalid webhook signature");
-                        var errorResponse = BaseResponse<object>.ErrorResult("Invalid webhook signature");
-                        return Unauthorized(errorResponse);
+                        return Unauthorized(BaseResponse<object>.ErrorResult("Invalid webhook signature"));
                     }
                 }
 
-                // Truyền object đã parse vào command
-                var command = new ProcessWebhookCommand
+                // 4. QUEUE FOR BACKGROUND PROCESSING (5ms) - Không đợi database
+                var backgroundRequest = new WebhookProcessingRequest
                 {
-                    WebhookPayload = webhookPayload,  // Truyền object đã parse
+                    TransactionId = webhookPayload.Id,
+                    WebhookPayload = webhookPayload,
                     ApiKey = receivedApiKey,
                     Signature = signature
                 };
 
-                var transaction = await _dispatcher.DispatchAsync<ProcessWebhookCommand, SepayTransaction>(command);
+                await _backgroundService.QueueWebhookAsync(backgroundRequest);
 
-                _logger.LogInformation($"Webhook processed successfully - Transaction ID: {transaction.TransactionId}, Status: {transaction.Status}");
+                // 5. IMMEDIATE RESPONSE (Total: ~100ms thay vì 2500ms)
+                var responseTime = DateTime.UtcNow - startTime;
+                _logger.LogInformation($"Webhook queued for background processing - ID: {webhookPayload.Id}, Response time: {responseTime.TotalMilliseconds}ms");
 
-                var response = BaseResponse<SepayTransaction>.SuccessResult(
-                    transaction, 
-                    "Webhook processed successfully");
+                var response = BaseResponse<object>.SuccessResult(
+                    new { 
+                        message = "Webhook received and queued for processing",
+                        transactionId = webhookPayload.Id,
+                        status = "processing",
+                        responseTime = $"{responseTime.TotalMilliseconds}ms"
+                    }, 
+                    "Webhook received successfully");
 
                 return Ok(response);
             }
             catch (SystemTextJson.JsonException ex)
             {
-                _logger.LogError(ex, "Invalid JSON format in webhook");
+                var processingTime = DateTime.UtcNow - startTime;
+                _logger.LogError(ex, $"Invalid JSON format in webhook after {processingTime.TotalMilliseconds}ms");
                 return BadRequest(BaseResponse<object>.ErrorResult("Invalid JSON format"));
             }
             catch (UnauthorizedAccessException ex)
             {
-                _logger.LogWarning(ex, "Unauthorized webhook request");
+                var processingTime = DateTime.UtcNow - startTime;
+                _logger.LogWarning(ex, $"Unauthorized webhook request after {processingTime.TotalMilliseconds}ms");
                 return Unauthorized(BaseResponse<object>.ErrorResult("Unauthorized"));
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing webhook");
+                var processingTime = DateTime.UtcNow - startTime;
+                _logger.LogError(ex, $"Error processing webhook after {processingTime.TotalMilliseconds}ms");
                 return StatusCode(500, BaseResponse<object>.ErrorResult($"Internal server error: {ex.Message}"));
             }
         }

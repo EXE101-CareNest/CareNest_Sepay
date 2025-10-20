@@ -48,6 +48,11 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IPaymentService, CareNest_SePay.Application.Services.PaymentService>();
 builder.Services.AddScoped<CareNest_SePay.Application.Services.IQRCodeService, CareNest_SePay.Application.Services.QRCodeService>();
 
+// Background Services for Async Processing
+builder.Services.AddSingleton<WebhookBackgroundService>();
+builder.Services.AddSingleton<IWebhookBackgroundService>(provider => provider.GetRequiredService<WebhookBackgroundService>());
+builder.Services.AddHostedService<WebhookBackgroundService>(provider => provider.GetRequiredService<WebhookBackgroundService>());
+
 // Infrastructure Services (External API calls)
 builder.Services.AddScoped<ISepayAPIService, SepayAPIService>();
 
