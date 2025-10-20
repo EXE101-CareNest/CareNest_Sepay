@@ -8,6 +8,7 @@ using CareNest_SePay.Application.Features.Commands;
 using CareNest_SePay.Domain.Entities;
 using CareNest_SePay.Domain.Commons.Enums;
 using CareNest_SePay.Domain.Commons.Constants;
+using CareNest_SePay.Application.Services;
 
 namespace CareNest_SePay.Application.Features.Handlers
 {
@@ -17,17 +18,23 @@ namespace CareNest_SePay.Application.Features.Handlers
         private readonly IPaymentService _paymentService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ProcessWebhookCommandHandler> _logger;
+        private readonly IAPIService _apiService;
+        private readonly OrderIdExtractionService _orderIdExtractionService;
 
         public ProcessWebhookCommandHandler(
             IUnitOfWork unitOfWork,
             IPaymentService paymentService,
             IConfiguration configuration,
-            ILogger<ProcessWebhookCommandHandler> logger)
+            ILogger<ProcessWebhookCommandHandler> logger,
+            IAPIService apiService,
+            OrderIdExtractionService orderIdExtractionService)
         {
             _unitOfWork = unitOfWork;
             _paymentService = paymentService;
             _configuration = configuration;
             _logger = logger;
+            _apiService = apiService;
+            _orderIdExtractionService = orderIdExtractionService;
         }
 
         public async Task<SepayTransaction> HandleAsync(ProcessWebhookCommand command)
@@ -61,12 +68,49 @@ namespace CareNest_SePay.Application.Features.Handlers
 
                 _logger.LogInformation($"Webhook processed successfully. Transaction ID: {transaction.Id}");
 
+                // Extract OrderId and call Order Service API
+                await CallOrderServiceAPI(transaction);
+
                 return transaction;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing webhook");
                 throw;
+            }
+        }
+
+        private async Task CallOrderServiceAPI(SepayTransaction transaction)
+        {
+            try
+            {
+                // Extract OrderId from TransactionContent
+                var orderId = _orderIdExtractionService.ExtractOrderId(transaction.TransactionContent);
+                
+                if (string.IsNullOrWhiteSpace(orderId))
+                {
+                    _logger.LogWarning($"Could not extract OrderId from TransactionContent: {transaction.TransactionContent}");
+                    return;
+                }
+
+                _logger.LogInformation($"Calling Order Service API for OrderId: {orderId}");
+
+                // Call Order Service API
+                var result = await _apiService.PutAsync<object>("order", $"/api/Order/update-status-to-cancel/{orderId}", new { });
+                
+                if (result.IsSuccess)
+                {
+                    _logger.LogInformation($"Successfully updated Order status for OrderId: {orderId}");
+                }
+                else
+                {
+                    _logger.LogError($"Failed to update Order status for OrderId: {orderId}. Error: {result.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error calling Order Service API for Transaction: {transaction.Id}");
+                // Don't throw exception here to avoid breaking the webhook processing
             }
         }
     }

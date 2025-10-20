@@ -47,11 +47,18 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 // Application Services (Business Logic)
 builder.Services.AddScoped<IPaymentService, CareNest_SePay.Application.Services.PaymentService>();
 builder.Services.AddScoped<CareNest_SePay.Application.Services.IQRCodeService, CareNest_SePay.Application.Services.QRCodeService>();
+builder.Services.AddScoped<CareNest_SePay.Application.Services.OrderIdExtractionService>();
 
 // Background Services for Async Processing
 builder.Services.AddSingleton<WebhookBackgroundService>();
 builder.Services.AddSingleton<IWebhookBackgroundService>(provider => provider.GetRequiredService<WebhookBackgroundService>());
 builder.Services.AddHostedService<WebhookBackgroundService>(provider => provider.GetRequiredService<WebhookBackgroundService>());
+
+// APIService for external API calls
+builder.Services.Configure<APIServiceOption>(
+    builder.Configuration.GetSection("APIService")
+);
+builder.Services.AddHttpClient<IAPIService, APIService>();
 
 // Infrastructure Services (External API calls)
 builder.Services.AddScoped<ISepayAPIService, SepayAPIService>();
