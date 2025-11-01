@@ -2,10 +2,10 @@
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
-USER $APP_UID
+# Configure ASP.NET Core to listen on port 8080
+ENV ASPNETCORE_URLS=http://+:8080
 WORKDIR /app
 EXPOSE 8080
-EXPOSE 8081
 
 
 # This stage is used to build the service project
@@ -30,4 +30,9 @@ RUN dotnet publish "./CareNest_SePay.csproj" -c $BUILD_CONFIGURATION -o /app/pub
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
 ENTRYPOINT ["dotnet", "CareNest_SePay.dll"]
