@@ -99,10 +99,18 @@ builder.Services.AddHealthChecks();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+// Enable Swagger in Development or if explicitly enabled in configuration
+var enableSwagger = app.Environment.IsDevelopment() || 
+                    app.Configuration.GetValue<bool>("EnableSwagger", true);
+
+if (enableSwagger)
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "CareNest SePay API v1");
+        c.RoutePrefix = "swagger";
+    });
 }
 
 // Global Exception Handling

@@ -117,6 +117,22 @@ Sepay__BankCode=VPBANK
 
 ---
 
+### 7. Swagger Configuration
+
+```env
+EnableSwagger=true
+```
+
+**Trong Koyeb:**
+- `EnableSwagger` → Environment Variable thường
+
+**Ghi chú:**
+- Set `EnableSwagger=true` để enable Swagger UI trong Production
+- Swagger mặc định sẽ được enable nếu không set (default: true)
+- Set `EnableSwagger=false` nếu muốn tắt Swagger trong Production (bảo mật)
+
+---
+
 ## 📝 Tổng hợp - Copy & Paste vào Koyeb
 
 ### Minimum Setup (Tối thiểu để chạy):
