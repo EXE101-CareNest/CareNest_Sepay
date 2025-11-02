@@ -1,0 +1,26 @@
+name: carenest-sepay
+type: web
+domain:
+  - name: carenest-sepay
+    type: public
+regions:
+  - fra
+build:
+  type: dockerfile
+  dockerfile_path: Dockerfile
+  dockerfile_context: .
+env:
+  - key: ASPNETCORE_ENVIRONMENT
+    value: Production
+  - key: ASPNETCORE_URLS
+    value: http://+:8080
+scalability:
+  min_scale: 1
+  max_scale: 1
+http_port: 8080
+healthcheck:
+  path: /health
+  interval: 30
+  timeout: 10
+  initial_timeout: 40
+

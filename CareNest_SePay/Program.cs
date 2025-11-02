@@ -25,9 +25,29 @@ builder.Host.UseSerilog((context, configuration) =>
 // Add services to the container
 builder.Services.AddControllers();
 
+// Database Settings
+builder.Services.Configure<DatabaseSettings>(
+    builder.Configuration.GetSection("DatabaseSettings")
+);
+
 // Database
+var dbSettings = builder.Configuration.GetSection("DatabaseSettings").Get<DatabaseSettings>();
+string connectionString;
+
+// Priority: DatabaseSettings > ConnectionStrings (backward compatibility)
+if (dbSettings != null && !string.IsNullOrEmpty(dbSettings.Ip))
+{
+    connectionString = dbSettings.BuildConnectionString();
+}
+else
+{
+    // Fallback to ConnectionStrings if DatabaseSettings not provided
+    connectionString = builder.Configuration.GetConnectionString("PostgresConnection") 
+        ?? throw new InvalidOperationException("Database configuration not found. Please configure either DatabaseSettings or ConnectionStrings:PostgresConnection");
+}
+
 builder.Services.AddDbContext<CareNestDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")));
+    options.UseNpgsql(connectionString));
 
 // CQRS
 builder.Services.AddScoped<IUseCaseDispatcher, UseCaseDispatcher>();
@@ -73,6 +93,9 @@ builder.Services.AddGlobalExceptionHandling();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Health Checks
+builder.Services.AddHealthChecks();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -90,5 +113,8 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Health Check endpoint
+app.MapHealthChecks("/health");
 
 app.Run();

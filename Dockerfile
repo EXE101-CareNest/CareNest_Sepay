@@ -29,10 +29,14 @@ RUN dotnet publish "./CareNest_SePay.csproj" -c $BUILD_CONFIGURATION -o /app/pub
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final
 WORKDIR /app
+
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 COPY --from=publish /app/publish .
 
 # Add health check
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-    CMD wget -qO- http://localhost:8080/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["dotnet", "CareNest_SePay.dll"]
