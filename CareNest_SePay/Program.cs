@@ -30,7 +30,6 @@ builder.Services.Configure<DatabaseSettings>(
     builder.Configuration.GetSection("DatabaseSettings")
 );
 
-// Database
 var dbSettings = builder.Configuration.GetSection("DatabaseSettings").Get<DatabaseSettings>();
 string connectionString;
 
@@ -44,6 +43,13 @@ else
     // Fallback to ConnectionStrings if DatabaseSettings not provided
     connectionString = builder.Configuration.GetConnectionString("PostgresConnection") 
         ?? throw new InvalidOperationException("Database configuration not found. Please configure either DatabaseSettings or ConnectionStrings:PostgresConnection");
+}
+
+// Validate connection string to fail fast with clear guidance
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Database connection string is empty. Set DatabaseSettings__Ip, __Port, __User, __Password, __Database (recommended) or provide ConnectionStrings__PostgresConnection as a fallback.");
 }
 
 builder.Services.AddDbContext<CareNestDbContext>(options =>
