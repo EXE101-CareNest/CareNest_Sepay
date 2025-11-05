@@ -28,21 +28,51 @@ builder.Services.AddControllers();
 // Database Settings
 builder.Services.Configure<DatabaseSettings>(
     builder.Configuration.GetSection("DatabaseSettings")
-);
+);  
 
 var dbSettings = builder.Configuration.GetSection("DatabaseSettings").Get<DatabaseSettings>();
 string connectionString;
 
-// Priority: DatabaseSettings > ConnectionStrings (backward compatibility)
-if (dbSettings != null && !string.IsNullOrEmpty(dbSettings.Ip))
+// Priority: DATABASE_URL (Heroku/Koyeb) > DatabaseSettings > ConnectionStrings
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL")
+                 ?? builder.Configuration["DATABASE_URL"];
+
+if (!string.IsNullOrWhiteSpace(databaseUrl))
+{
+    try
+    {
+        var uri = new Uri(databaseUrl);
+        var userInfo = uri.UserInfo.Split(':', 2);
+        var user = Uri.UnescapeDataString(userInfo[0]);
+        var password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : string.Empty;
+        var host = uri.Host;
+        var port = uri.IsDefaultPort ? 5432 : uri.Port;
+        var database = uri.AbsolutePath.Trim('/');
+
+        connectionString = $"Host={host};Port={port};Username={user};Password={password};Database={database};SSL Mode=Require;Trust Server Certificate=true;";
+        Log.Information("DB config: Using DATABASE_URL. Host={Host}, Database={Database}", host, database);
+    }
+    catch (Exception ex)
+    {
+        throw new InvalidOperationException("Invalid DATABASE_URL format. Expected postgres://user:pass@host:port/db", ex);
+    }
+}
+else if (dbSettings != null && !string.IsNullOrEmpty(dbSettings.Ip))
 {
     connectionString = dbSettings.BuildConnectionString();
+    Log.Information("DB config: Using DatabaseSettings. Host={Host}, Database={Database}", dbSettings.Ip, dbSettings.Database);
 }
 else
 {
     // Fallback to ConnectionStrings if DatabaseSettings not provided
     connectionString = builder.Configuration.GetConnectionString("PostgresConnection") 
         ?? throw new InvalidOperationException("Database configuration not found. Please configure either DatabaseSettings or ConnectionStrings:PostgresConnection");
+    // Try to extract host and db name for visibility (best-effort, no secrets)
+    var hostPart = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+        .FirstOrDefault(p => p.Trim().StartsWith("Host=", StringComparison.OrdinalIgnoreCase)) ?? "Host=(unknown)";
+    var dbPart = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+        .FirstOrDefault(p => p.Trim().StartsWith("Database=", StringComparison.OrdinalIgnoreCase)) ?? "Database=(unknown)";
+    Log.Information("DB config: Using ConnectionStrings. {HostPart}, {DbPart}", hostPart, dbPart);
 }
 
 // Validate connection string to fail fast with clear guidance
@@ -117,6 +147,15 @@ if (enableSwagger)
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "CareNest SePay API v1");
         c.RoutePrefix = "swagger";
     });
+}
+
+// Optionally apply EF Core migrations on startup (controlled by RunMigrations config)
+var runMigrations = app.Configuration.GetValue<bool>("RunMigrations", false);
+if (runMigrations)
+{
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<CareNestDbContext>();
+    dbContext.Database.Migrate();
 }
 
 // Global Exception Handling
